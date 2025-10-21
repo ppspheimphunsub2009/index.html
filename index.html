@@ -1,0 +1,774 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { ShoppingCart, Trash2, Plus, Minus, Search, Package, Truck, FileText, Download, Phone, Printer, Check, Copy, ChevronDown, ChevronUp, Globe2, Settings, LogIn, LogOut, Image as ImageIcon, Upload, Save, FileSpreadsheet, BadgeCheck } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+
+/**
+ * ✅ E2E Ordering Web (No backend needed — works in browser). “ทุกแบบ” ตามที่ขอ
+ * - แคตตาล็อก + รูปภาพ + อัพโหลด CSV
+ * - ตะกร้า + ปรับจำนวน + คูปองส่วนลด (เช่น SAVE50 = ฿50)
+ * - โซนจัดส่ง: ใกล้/กลาง/ไกล (คิดค่าส่งต่างกัน + ฟรีตามยอด)
+ * - ฟอร์มลูกค้า + ประเภทเอกสาร (บิลเงินสด/ใบกำกับภาษีเต็มรูป/แบบย่อ)
+ * - ภาษาคู่ TH/EN สลับได้ทันที
+ * - สถานะคำสั่งซื้อ: ร่าง/รอชำระ/กำลังจัดส่ง/สำเร็จ (แอดมินปรับได้)
+ * - ตัดสต็อกจากสต๊อกในระบบ (ถ้าเป็นแอดมินเลือก “ยืนยัน”) — เก็บใน localStorage
+ * - ปริ้น: ใบสรุป/ใบส่งของ/ใบกำกับภาษีเต็มรูป (เลย์เอาต์พิมพ์)
+ * - ส่งออก/นำเข้า CSV/JSON (สำรองข้อมูล/ย้ายเครื่อง)
+ * - Hook ต่อ Google Sheets / LINE Notify / Firestore เมื่อพร้อม (ช่องทางอยู่ใน handleSubmit)
+ *
+ * วิธีใช้ด่วน:
+ * 1) เปลี่ยนข้อมูลร้านใน SHOP
+ * 2) เพิ่มสินค้า/รูปภาพที่ CATALOG เริ่มต้น หรืออัพโหลด CSV ในโหมดแอดมิน
+ * 3) ใช้ PIN แอดมิน: 2009 (ตั้งค่าใน ADMIN_PIN) เพื่อเข้า Admin Panel
+ */
+
+const ADMIN_PIN = "2009"; // เปลี่ยนได้
+
+const I18N = {
+  th: {
+    shopCall: "โทร",
+    cart: "ตะกร้า",
+    addToCart: "เพิ่มลงตะกร้า",
+    unit: "หน่วย",
+    pricePerUnit: "ราคา/หน่วย",
+    subtotal: "รวมค่าสินค้า",
+    vat: "ภาษีมูลค่าเพิ่ม 7%",
+    deliveryFee: "ค่าขนส่ง",
+    free: "ฟรี",
+    total: "ยอดชำระ",
+    customerInfo: "ข้อมูลลูกค้า",
+    customerName: "ชื่อลูกค้า",
+    phone: "เบอร์โทร",
+    address: "ที่อยู่จัดส่ง",
+    deliveryDate: "วันที่ต้องการส่ง",
+    paymentMethod: "วิธีชำระเงิน",
+    invoiceType: "เอกสารที่ต้องการ",
+    cashBill: "บิลเงินสด",
+    fullTax: "ใบกำกับภาษีเต็มรูป",
+    shortTax: "ใบกำกับแบบย่อ",
+    taxId: "เลขผู้เสียภาษี",
+    company: "ชื่อบริษัท/ชื่อออกเอกสาร",
+    needDelivery: "ต้องการจัดส่ง",
+    note: "หมายเหตุ",
+    confirm: "ยืนยันสั่งซื้อ",
+    print: "ปริ้น",
+    copy: "คัดลอก",
+    download: "ดาวน์โหลด JSON",
+    searchPlaceholder: "ค้นหาสินค้า / หมวดหมู่...",
+    all: "ทั้งหมด",
+    deliveryZone: "โซนจัดส่ง",
+    zoneNear: "ใกล้",
+    zoneMid: "กลาง",
+    zoneFar: "ไกล",
+    coupon: "คูปองส่วนลด",
+    apply: "ใช้คูปอง",
+    admin: "แอดมิน",
+    login: "เข้าสู่ระบบ",
+    logout: "ออกจากระบบ",
+    catalog: "แคตตาล็อก",
+    stock: "สต๊อก",
+    status: "สถานะ",
+    statusDraft: "ร่าง",
+    statusPending: "รอชำระ",
+    statusShipping: "กำลังจัดส่ง",
+    statusDone: "สำเร็จ",
+    docOrderSummary: "ใบสรุปคำสั่งซื้อ",
+    docDeliveryNote: "ใบส่งของ",
+    docTaxInvoice: "ใบกำกับภาษี",
+    payment: { bank: "โอน", cod: "เก็บเงินปลายทาง", bill: "โอน+วางบิล" },
+    uploadCSV: "อัพโหลด CSV",
+    exportCSV: "ส่งออก CSV",
+    saveData: "บันทึกข้อมูล",
+    importJSON: "นำเข้า JSON",
+    exportJSON: "ส่งออก JSON",
+    image: "รูปภาพ",
+    minFill: "กรุณากรอกชื่อและเบอร์โทรลูกค้า",
+    emptyCart: "ยังไม่มีสินค้าในตะกร้า",
+  },
+  en: {
+    shopCall: "Call",
+    cart: "Cart",
+    addToCart: "Add to cart",
+    unit: "Unit",
+    pricePerUnit: "Unit Price",
+    subtotal: "Subtotal",
+    vat: "VAT 7%",
+    deliveryFee: "Delivery Fee",
+    free: "Free",
+    total: "Total",
+    customerInfo: "Customer Info",
+    customerName: "Customer Name",
+    phone: "Phone",
+    address: "Shipping Address",
+    deliveryDate: "Delivery Date",
+    paymentMethod: "Payment Method",
+    invoiceType: "Document Type",
+    cashBill: "Cash Bill",
+    fullTax: "Full Tax Invoice",
+    shortTax: "Short Tax Invoice",
+    taxId: "Tax ID",
+    company: "Company / Bill To",
+    needDelivery: "Need Delivery",
+    note: "Note",
+    confirm: "Confirm Order",
+    print: "Print",
+    copy: "Copy",
+    download: "Download JSON",
+    searchPlaceholder: "Search product / category...",
+    all: "All",
+    deliveryZone: "Delivery Zone",
+    zoneNear: "Near",
+    zoneMid: "Mid",
+    zoneFar: "Far",
+    coupon: "Discount Coupon",
+    apply: "Apply",
+    admin: "Admin",
+    login: "Login",
+    logout: "Logout",
+    catalog: "Catalog",
+    stock: "Stock",
+    status: "Status",
+    statusDraft: "Draft",
+    statusPending: "Pending",
+    statusShipping: "Shipping",
+    statusDone: "Done",
+    docOrderSummary: "Order Summary",
+    docDeliveryNote: "Delivery Note",
+    docTaxInvoice: "Tax Invoice",
+    payment: { bank: "Bank Transfer", cod: "Cash on Delivery", bill: "Transfer + Bill" },
+    uploadCSV: "Upload CSV",
+    exportCSV: "Export CSV",
+    saveData: "Save Data",
+    importJSON: "Import JSON",
+    exportJSON: "Export JSON",
+    image: "Image",
+    minFill: "Please fill customer name & phone",
+    emptyCart: "Cart is empty",
+  },
+};
+
+const SHOP = {
+  nameTH: "เพิ่มพูนทรัพย์วัสดุ 2009",
+  nameEN: "Permpoonsap Materials 2009",
+  phones: ["081-546-4185", "094-998-2691"],
+  line: "@423gyrte",
+  addressTH: "227 ม.2 ต.โนนหัน อ.ชุมแพ จ.ขอนแก่น 40290",
+  addressEN: "227 Moo 2, Non Han, Chum Phae, Khon Kaen 40290",
+  taxId: "0403566005254",
+};
+
+// เริ่มต้นแคตตาล็อกตัวอย่าง (รูปภาพเป็น optional)
+const DEFAULT_CATALOG = [
+  { id: "cm-cpac", name: "ปูนซีแพค 50กก.", nameEN: "CPAC Cement 50kg", unit: "ถุง", price: 185, category: "ปูน/คอนกรีต", stock: 200, img: "" },
+  { id: "bk-red", name: "อิฐมอญตัน", nameEN: "Solid Red Brick", unit: "ก้อน", price: 1.8, category: "อิฐ/บล็อก", stock: 5000, img: "" },
+  { id: "sd-fine", name: "ทรายหยาบ", nameEN: "Coarse Sand", unit: "คิว", price: 380, category: "ทราย/หิน", stock: 80, img: "" },
+  { id: "rk-34", name: "หินเบอร์3/4", nameEN: "Crushed Stone 3/4", unit: "คิว", price: 520, category: "ทราย/หิน", stock: 60, img: "" },
+  { id: "st-rb10", name: "เหล็กเส้น RB10", nameEN: "RB10 Rebar", unit: "เส้น", price: 125, category: "เหล็ก/โครงสร้าง", stock: 400, img: "" },
+  { id: "pv-1", name: "ท่อ PVC 1\" ชั้น13.5", nameEN: "PVC Pipe 1\" SCH13.5", unit: "ท่อน", price: 79, category: "ท่อ/ประปา", stock: 160, img: "" },
+  { id: "el-wire2-2", name: "สายไฟ VAF 2x2.5", nameEN: "Wire VAF 2x2.5", unit: "ม้วน", price: 890, category: "ไฟฟ้า/เครื่องมือ", stock: 40, img: "" },
+];
+
+const DEFAULT_SETTINGS = {
+  language: "th",
+  deliveryZone: "near", // near|mid|far
+  deliveryFees: { near: 150, mid: 250, far: 400 },
+  freeShipThreshold: 5000,
+  coupons: { SAVE50: 50, SAVE100: 100 },
+};
+
+// === Utils ===
+const LS_KEYS = {
+  catalog: "ps_catalog",
+  orders: "ps_orders",
+  settings: "ps_settings",
+};
+
+function currency(n, lang = "th") {
+  const num = isNaN(n) ? 0 : Number(n);
+  return num.toLocaleString(lang === "th" ? "th-TH" : "en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function download(filename, content, type = "application/json") {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url);
+}
+
+function copyToClipboard(text) { navigator.clipboard.writeText(text); }
+
+function parseCSV(text) {
+  const rows = text.split(/
+?
+/).filter(Boolean).map(r => r.split(",").map(c=>c.trim()));
+  const head = rows.shift();
+  return rows.map(r => Object.fromEntries(r.map((v,i)=>[head[i], v])));
+}
+
+function toCSV(items) {
+  const cols = ["id","name","nameEN","unit","price","category","stock","img"]; 
+  const head = cols.join(",");
+  const lines = items.map(it => cols.map(k => (it[k]??"").toString().replaceAll(","," ")).join(","));
+  return [head, ...lines].join("
+");
+}
+
+export default function OrderSitePro() {
+  // Load settings/catalog from localStorage
+  const [settings, setSettings] = useState(()=>{
+    try { return { ...DEFAULT_SETTINGS, ...(JSON.parse(localStorage.getItem(LS_KEYS.settings) || "{}")) }; } catch { return DEFAULT_SETTINGS; }
+  });
+  const [catalog, setCatalog] = useState(()=>{
+    try { const d = JSON.parse(localStorage.getItem(LS_KEYS.catalog) || "null"); return d?.length ? d : DEFAULT_CATALOG; } catch { return DEFAULT_CATALOG; }
+  });
+  const [orders, setOrders] = useState(()=>{
+    try { return JSON.parse(localStorage.getItem(LS_KEYS.orders) || "[]"); } catch { return []; }
+  });
+
+  useEffect(()=>{ localStorage.setItem(LS_KEYS.settings, JSON.stringify(settings)); }, [settings]);
+  useEffect(()=>{ localStorage.setItem(LS_KEYS.catalog, JSON.stringify(catalog)); }, [catalog]);
+  useEffect(()=>{ localStorage.setItem(LS_KEYS.orders, JSON.stringify(orders)); }, [orders]);
+
+  const t = I18N[settings.language];
+
+  const [query, setQuery] = useState("");
+  const [cat, setCat] = useState("all");
+  const [cart, setCart] = useState([]); // {id, name, unit, price, qty}
+  const [coupon, setCoupon] = useState("");
+  const [openCart, setOpenCart] = useState(true);
+  const [admin, setAdmin] = useState(false);
+
+  const [customer, setCustomer] = useState({
+    name: "",
+    phone: "",
+    address: "",
+    deliveryDate: "",
+    payment: "bank",
+    invoiceType: "cash",
+    taxId: "",
+    company: "",
+    note: "",
+    needDelivery: true,
+    status: "draft", // draft|pending|shipping|done
+  });
+
+  const categories = useMemo(()=>["all", ...Array.from(new Set(catalog.map(p=>p.category)))], [catalog]);
+
+  const filtered = useMemo(()=>{
+    let items = catalog;
+    if (cat !== "all") items = items.filter(p=>p.category === cat);
+    if (query.trim()) {
+      const q = query.trim().toLowerCase();
+      items = items.filter(p => `${p.name} ${p.nameEN??""} ${p.category}`.toLowerCase().includes(q));
+    }
+    return items;
+  }, [catalog, cat, query]);
+
+  function addToCart(p){
+    setCart(prev=>{
+      const found = prev.find(i=>i.id===p.id);
+      if (found) return prev.map(i=>i.id===p.id?{...i, qty:i.qty+1}:i);
+      return [...prev, { id:p.id, name:p.name, nameEN:p.nameEN, unit:p.unit, price:Number(p.price), qty:1 }];
+    });
+  }
+  function updateQty(id, delta){ setCart(prev=>prev.map(i=>i.id===id?{...i, qty:Math.max(1, i.qty+delta)}:i)); }
+  function removeItem(id){ setCart(prev=>prev.filter(i=>i.id!==id)); }
+
+  const couponValue = useMemo(()=> settings.coupons[coupon?.trim().toUpperCase()] || 0, [coupon, settings.coupons]);
+
+  const totals = useMemo(()=>{
+    const sub = cart.reduce((s,i)=> s + i.price*i.qty, 0);
+    const vatEnabled = customer.invoiceType === "full"; // full tax invoice only
+    const vat = vatEnabled ? sub * 0.07 : 0;
+    const zoneKey = settings.deliveryZone; // near|mid|far
+    let deliveryFee = customer.needDelivery ? settings.deliveryFees[zoneKey] : 0;
+    if (customer.needDelivery && sub >= settings.freeShipThreshold) deliveryFee = 0;
+    const discount = Math.min(couponValue, sub);
+    const grand = sub + vat + deliveryFee - discount;
+    return { sub, vat, deliveryFee, discount, grand, vatEnabled };
+  }, [cart, customer.invoiceType, customer.needDelivery, settings.deliveryZone, settings.deliveryFees, settings.freeShipThreshold, couponValue]);
+
+  // === Admin helpers ===
+  function doLogin(){
+    const pin = prompt("Enter Admin PIN");
+    if (pin === ADMIN_PIN) setAdmin(true); else alert("PIN ไม่ถูกต้อง");
+  }
+  function doLogout(){ setAdmin(false); }
+
+  function saveOrder(statusOverride){
+    if (!customer.name || !customer.phone){ alert(t.minFill); return; }
+    if (cart.length===0){ alert(t.emptyCart); return; }
+
+    const now = new Date();
+    const order = {
+      id: `ORD-${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}-${now.getTime()}`,
+      shop: SHOP,
+      customer: { ...customer, status: statusOverride || customer.status },
+      items: cart,
+      totals,
+      settings,
+      createdAt: now.toISOString(),
+    };
+
+    // ตัดสต๊อกเมื่อแอดมินกดยืนยัน (ถือว่าออเดอร์ล็อกแล้ว)
+    if (admin && (statusOverride === "pending" || statusOverride === "shipping" || statusOverride === "done")){
+      const nextCat = catalog.map(p=>{
+        const inCart = cart.find(i=>i.id===p.id);
+        if (!inCart) return p;
+        return { ...p, stock: Math.max(0, Number(p.stock||0) - inCart.qty) };
+      });
+      setCatalog(nextCat);
+    }
+
+    setOrders(prev=>[order, ...prev]);
+    alert("บันทึกคำสั่งซื้อแล้ว");
+    return order;
+  }
+
+  function handleSubmit(){
+    const order = saveOrder();
+    if (!order) return;
+
+    // 🔌 ตัวอย่าง Hook (คอมเมนต์ไว้):
+    // fetch("YOUR_APPS_SCRIPT_URL", { method:"POST", body: JSON.stringify(order) })
+    // fetch("YOUR_LINE_NOTIFY_PROXY", { method:"POST", body: new URLSearchParams({ message: textSummary(order) }) })
+    // await addDoc(collection(db, "orders"), order)
+  }
+
+  function textSummary(orderLike){
+    const o = orderLike || { shop: SHOP, customer, items: cart, totals };
+    const lines = [];
+    lines.push(`${SHOP.nameTH}`);
+    lines.push(`โทร: ${SHOP.phones.join(" / ")} • LINE ${SHOP.line}`);
+    lines.push("—— สั่งซื้อสินค้า ——");
+    (o.items).forEach((i, idx)=>{
+      lines.push(`${idx+1}. ${i.name} x ${i.qty} ${i.unit} = ${currency(i.price*i.qty, settings.language)} บาท`);
+    });
+    lines.push(`รวมค่าสินค้า: ${currency(o.totals.sub, settings.language)} บาท`);
+    if (o.totals.vat) lines.push(`VAT: ${currency(o.totals.vat, settings.language)} บาท`);
+    if (o.totals.discount) lines.push(`ส่วนลด: -${currency(o.totals.discount, settings.language)} บาท`);
+    if (o.totals.deliveryFee) lines.push(`ค่าขนส่ง: ${currency(o.totals.deliveryFee, settings.language)} บาท`);
+    lines.push(`ยอดชำระ: ${currency(o.totals.grand, settings.language)} บาท`);
+    lines.push("—— ลูกค้า ——");
+    lines.push(`${o.customer.name} • ${o.customer.phone}`);
+    if (o.customer.address) lines.push(o.customer.address);
+    if (o.customer.deliveryDate) lines.push(`นัดส่ง: ${o.customer.deliveryDate}`);
+    lines.push(`ชำระเงิน: ${o.customer.payment}`);
+    lines.push(`เอกสาร: ${o.customer.invoiceType}`);
+    return lines.join("
+");
+  }
+
+  // === CSV / JSON ===
+  function onUploadCSV(e){
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const fr = new FileReader();
+    fr.onload = () => {
+      try {
+        const rows = parseCSV(String(fr.result));
+        // Map เป็น catalog fields
+        const mapped = rows.map(r=>({
+          id: r.id || crypto.randomUUID(),
+          name: r.name||"",
+          nameEN: r.nameEN||"",
+          unit: r.unit||"หน่วย",
+          price: Number(r.price||0),
+          category: r.category||"ทั่วไป",
+          stock: Number(r.stock||0),
+          img: r.img||"",
+        }));
+        setCatalog(mapped);
+        alert("อัพเดตแคตตาล็อกจาก CSV แล้ว");
+      } catch(e){ alert("CSV ไม่ถูกต้อง"); }
+    };
+    fr.readAsText(file);
+  }
+
+  function exportCSV(){ download(`catalog-${Date.now()}.csv`, toCSV(catalog), "text/csv"); }
+  function exportJSON(){ download(`data-${Date.now()}.json`, JSON.stringify({ settings, catalog, orders }, null, 2)); }
+  function importJSON(ev){
+    const f = ev.target.files?.[0]; if (!f) return;
+    const fr = new FileReader(); fr.onload = ()=>{
+      try{
+        const d = JSON.parse(String(fr.result));
+        if (d.settings) setSettings(s=>({ ...s, ...d.settings }));
+        if (Array.isArray(d.catalog) && d.catalog.length) setCatalog(d.catalog);
+        if (Array.isArray(d.orders)) setOrders(d.orders);
+        alert("นำเข้าข้อมูลเรียบร้อย");
+      }catch{ alert("ไฟล์ไม่ถูกต้อง"); }
+    }; fr.readAsText(f);
+  }
+
+  // === Print ===
+  const printRef = useRef(null);
+  function doPrint(kind){
+    // ใช้ CSS ซ่อน/แสดงบล็อกในโหมดพิมพ์ตาม kind: summary|delivery|tax
+    const root = document.documentElement;
+    root.style.setProperty("--print-kind", kind);
+    window.print();
+  }
+
+  return (
+    <div className="min-h-screen bg-neutral-50">
+      {/* Header */}
+      <header className="sticky top-0 z-40 bg-white/80 backdrop-blur border-b">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <Package className="w-6 h-6" />
+            <div>
+              <div className="text-lg font-semibold">{settings.language==='th'?SHOP.nameTH:SHOP.nameEN}</div>
+              <div className="text-xs text-neutral-500">{t.shopCall} {SHOP.phones.join(" / ")} • LINE {SHOP.line}</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={()=>setSettings(s=>({...s, language: s.language==='th'?'en':'th'}))} className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-xl border hover:bg-neutral-50">
+              <Globe2 className="w-4 h-4"/> {settings.language.toUpperCase()}
+            </button>
+            <button onClick={()=>setOpenCart(v=>!v)} className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-xl border hover:bg-neutral-50">
+              <ShoppingCart className="w-4 h-4"/> {t.cart} ({cart.reduce((s,i)=>s+i.qty,0)}) {openCart ? <ChevronUp className="w-4 h-4"/>:<ChevronDown className="w-4 h-4"/>}
+            </button>
+            {!admin ? (
+              <button onClick={doLogin} className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-xl border hover:bg-neutral-50"><LogIn className="w-4 h-4"/>{t.login}</button>
+            ) : (
+              <button onClick={doLogout} className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-xl border hover:bg-neutral-50"><LogOut className="w-4 h-4"/>{t.logout}</button>
+            )}
+          </div>
+        </div>
+      </header>
+
+      {/* Main */}
+      <main className="max-w-7xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Catalog */}
+        <section className="lg:col-span-2">
+          <div className="mb-3 grid grid-cols-1 md:grid-cols-4 gap-2">
+            <div className="md:col-span-2 relative">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400"/>
+              <input placeholder={t.searchPlaceholder} className="w-full pl-9 pr-3 py-2 rounded-xl border focus:outline-none focus:ring-2 focus:ring-neutral-300" value={query} onChange={e=>setQuery(e.target.value)} />
+            </div>
+            <select className="w-full px-3 py-2 rounded-xl border" value={cat} onChange={e=>setCat(e.target.value)}>
+              <option value="all">{t.all}</option>
+              {categories.filter(c=>c!=="all").map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-neutral-600">{t.deliveryZone}</span>
+              <select className="px-3 py-2 rounded-xl border" value={settings.deliveryZone} onChange={e=>setSettings(s=>({...s, deliveryZone:e.target.value}))}>
+                <option value="near">{t.zoneNear}</option>
+                <option value="mid">{t.zoneMid}</option>
+                <option value="far">{t.zoneFar}</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-3">
+            {filtered.map(p => (
+              <motion.div key={p.id} layout initial={{opacity:0, y:10}} animate={{opacity:1,y:0}} className="rounded-2xl border bg-white p-4 shadow-sm">
+                <div className="text-sm text-neutral-500">{p.category}</div>
+                <div className="font-semibold mt-1">{settings.language==='th'?p.name:(p.nameEN||p.name)}</div>
+                {p.img ? (
+                  <img src={p.img} alt={p.name} className="w-full h-36 object-cover rounded-xl mt-2 border"/>
+                ) : (
+                  <div className="mt-2 h-36 rounded-xl border flex items-center justify-center text-neutral-400"><ImageIcon className="w-6 h-6"/></div>
+                )}
+                <div className="text-neutral-600 mt-1">{t.unit}: {p.unit} • {t.stock}: {p.stock ?? 0}</div>
+                <div className="text-lg font-semibold mt-2">฿{currency(p.price, settings.language)}</div>
+                <button onClick={()=>addToCart(p)} className="mt-3 w-full inline-flex items-center justify-center gap-2 rounded-xl border bg-neutral-900 text-white py-2 hover:opacity-90">
+                  <Plus className="w-4 h-4"/> {t.addToCart}
+                </button>
+              </motion.div>
+            ))}
+          </div>
+        </section>
+
+        {/* Cart + Customer */}
+        <section className="lg:col-span-1">
+          <AnimatePresence initial={false}>
+            {openCart && (
+              <motion.div layout initial={{opacity:0, y:-8}} animate={{opacity:1, y:0}} exit={{opacity:0, y:-8}} className="rounded-2xl border bg-white p-4 shadow-sm sticky top-[68px]">
+                <div className="flex items-center justify-between">
+                  <div className="font-semibold flex items-center gap-2"><ShoppingCart className="w-4 h-4"/> {t.cart}</div>
+                  {cart.length>0 && (
+                    <button onClick={()=>setCart([])} className="text-xs text-neutral-500 hover:text-neutral-800">ล้างตะกร้า</button>
+                  )}
+                </div>
+
+                {/* Items */}
+                <div className="mt-3 space-y-2 max-h-56 overflow-auto pr-1">
+                  {cart.length === 0 && (
+                    <div className="text-sm text-neutral-500">{t.emptyCart}</div>
+                  )}
+                  {cart.map(i => (
+                    <div key={i.id} className="rounded-xl border p-3">
+                      <div className="font-medium">{settings.language==='th'?i.name:(i.nameEN||i.name)}</div>
+                      <div className="text-xs text-neutral-500">{t.unit}: {i.unit} • {t.pricePerUnit} ฿{currency(i.price, settings.language)}</div>
+                      <div className="mt-2 flex items-center justify-between">
+                        <div className="inline-flex items-center gap-2">
+                          <button onClick={()=>updateQty(i.id, -1)} className="p-1 rounded-lg border"><Minus className="w-4 h-4"/></button>
+                          <div className="w-8 text-center">{i.qty}</div>
+                          <button onClick={()=>updateQty(i.id, +1)} className="p-1 rounded-lg border"><Plus className="w-4 h-4"/></button>
+                        </div>
+                        <div className="font-semibold">฿{currency(i.qty * i.price, settings.language)}</div>
+                        <button onClick={()=>removeItem(i.id)} className="p-1 rounded-lg border hover:bg-neutral-50"><Trash2 className="w-4 h-4"/></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Totals */}
+                <div className="mt-3 border-t pt-3 space-y-2 text-sm">
+                  <div className="flex justify-between"><span>{t.subtotal}</span><span>฿{currency(totals.sub, settings.language)}</span></div>
+                  {totals.discount>0 && <div className="flex justify-between"><span>Discount</span><span>-฿{currency(totals.discount, settings.language)}</span></div>}
+                  {totals.vatEnabled && <div className="flex justify-between"><span>{t.vat}</span><span>฿{currency(totals.vat, settings.language)}</span></div>}
+                  {customer.needDelivery && <div className="flex justify-between"><span>{t.deliveryFee} {totals.deliveryFee===0?`(${t.free})`:null}</span><span>฿{currency(totals.deliveryFee, settings.language)}</span></div>}
+                  <div className="flex justify-between font-semibold text-base border-t pt-2"><span>{t.total}</span><span>฿{currency(totals.grand, settings.language)}</span></div>
+                </div>
+
+                {/* Coupon */}
+                <div className="mt-3 grid grid-cols-[1fr_auto] gap-2">
+                  <input value={coupon} onChange={e=>setCoupon(e.target.value)} placeholder={t.coupon} className="border rounded-xl px-3 py-2"/>
+                  <button onClick={()=>setCoupon(coupon.trim())} className="px-3 py-2 rounded-xl border">{t.apply}</button>
+                </div>
+
+                {/* Customer Form */}
+                <div className="mt-4 space-y-3">
+                  <div className="font-semibold flex items-center gap-2"><FileText className="w-4 h-4"/> {t.customerInfo}</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input className="border rounded-xl px-3 py-2 col-span-2" placeholder={t.customerName} value={customer.name} onChange={e=>setCustomer({...customer, name:e.target.value})}/>
+                    <input className="border rounded-xl px-3 py-2" placeholder={t.phone} value={customer.phone} onChange={e=>setCustomer({...customer, phone:e.target.value})}/>
+                    <input type="date" className="border rounded-xl px-3 py-2" value={customer.deliveryDate} onChange={e=>setCustomer({...customer, deliveryDate:e.target.value})}/>
+                    <textarea rows={2} className="border rounded-xl px-3 py-2 col-span-2" placeholder={t.address} value={customer.address} onChange={e=>setCustomer({...customer, address:e.target.value})}></textarea>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div>
+                      <div className="text-xs text-neutral-500 mb-1">{t.paymentMethod}</div>
+                      <select className="w-full border rounded-xl px-3 py-2" value={customer.payment} onChange={e=>setCustomer({...customer, payment:e.target.value})}>
+                        <option value="bank">{t.payment.bank}</option>
+                        <option value="cod">{t.payment.cod}</option>
+                        <option value="bill">{t.payment.bill}</option>
+                      </select>
+                    </div>
+                    <div>
+                      <div className="text-xs text-neutral-500 mb-1">{t.invoiceType}</div>
+                      <select className="w-full border rounded-xl px-3 py-2" value={customer.invoiceType} onChange={e=>setCustomer({...customer, invoiceType:e.target.value})}>
+                        <option value="cash">{t.cashBill}</option>
+                        <option value="full">{t.fullTax}</option>
+                        <option value="short">{t.shortTax}</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {customer.invoiceType !== "cash" && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <input className="border rounded-xl px-3 py-2" placeholder={t.taxId} value={customer.taxId} onChange={e=>setCustomer({...customer, taxId:e.target.value})}/>
+                      <input className="border rounded-xl px-3 py-2" placeholder={t.company} value={customer.company} onChange={e=>setCustomer({...customer, company:e.target.value})}/>
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2 text-sm">
+                    <input id="needDelivery" type="checkbox" checked={customer.needDelivery} onChange={e=>setCustomer({...customer, needDelivery:e.target.checked})}/>
+                    <label htmlFor="needDelivery">{t.needDelivery} (≥ ฿{currency(settings.freeShipThreshold, settings.language)} {t.free})</label>
+                  </div>
+
+                  <textarea className="border rounded-xl px-3 py-2 w-full" rows={2} placeholder={t.note} value={customer.note} onChange={e=>setCustomer({...customer, note:e.target.value})}></textarea>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={handleSubmit} className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-green-600 text-white py-2 hover:opacity-90">
+                      <Check className="w-4 h-4"/> {t.confirm}
+                    </button>
+                    <button onClick={()=>doPrint('summary')} className="w-full inline-flex items-center justify-center gap-2 rounded-xl border py-2 hover:bg-neutral-50">
+                      <Printer className="w-4 h-4"/> {t.print} ({t.docOrderSummary})
+                    </button>
+                    <button onClick={()=>copyToClipboard(textSummary())} className="w-full inline-flex items-center justify-center gap-2 rounded-xl border py-2 hover:bg-neutral-50">
+                      <Copy className="w-4 h-4"/> {t.copy}
+                    </button>
+                    <button onClick={()=>download(`order-${Date.now()}.json`, JSON.stringify({ shop: SHOP, customer, items: cart, totals, createdAt:new Date().toISOString(), settings }, null, 2))} className="w-full inline-flex items-center justify-center gap-2 rounded-xl border py-2 hover:bg-neutral-50">
+                      <Download className="w-4 h-4"/> {t.download}
+                    </button>
+                    <button onClick={()=>doPrint('delivery')} className="w-full inline-flex items-center justify-center gap-2 rounded-xl border py-2 hover:bg-neutral-50">
+                      <Printer className="w-4 h-4"/> {t.print} ({t.docDeliveryNote})
+                    </button>
+                    {customer.invoiceType==='full' && (
+                      <button onClick={()=>doPrint('tax')} className="w-full inline-flex items-center justify-center gap-2 rounded-xl border py-2 hover:bg-neutral-50">
+                        <Printer className="w-4 h-4"/> {t.print} ({t.docTaxInvoice})
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Admin Panel */}
+                  {admin && (
+                    <div className="mt-4 p-3 border rounded-xl">
+                      <div className="font-semibold flex items-center gap-2 mb-2"><Settings className="w-4 h-4"/> Admin Panel</div>
+                      <div className="grid grid-cols-2 gap-2 text-sm">
+                        <div>
+                          <div className="text-xs text-neutral-500">Free Ship Threshold</div>
+                          <input type="number" className="border rounded-xl px-3 py-2 w-full" value={settings.freeShipThreshold} onChange={e=>setSettings(s=>({...s, freeShipThreshold:Number(e.target.value||0)}))}/>
+                        </div>
+                        <div>
+                          <div className="text-xs text-neutral-500">Delivery Near/Mid/Far</div>
+                          <div className="grid grid-cols-3 gap-1">
+                            {(["near","mid","far"]).map(k=> (
+                              <input key={k} type="number" className="border rounded-xl px-2 py-2" value={settings.deliveryFees[k]} onChange={e=>setSettings(s=>({...s, deliveryFees:{...s.deliveryFees, [k]:Number(e.target.value||0)}}))} />
+                            ))}
+                          </div>
+                        </div>
+                        <div className="col-span-2">
+                          <div className="text-xs text-neutral-500">Coupons (Code=Value, คั่นด้วย ,)</div>
+                          <input className="border rounded-xl px-3 py-2 w-full" value={Object.entries(settings.coupons).map(([k,v])=>`${k}=${v}`).join(",")}
+                            onChange={e=>{
+                              const map = {}; e.target.value.split(",").map(x=>x.trim()).filter(Boolean).forEach(p=>{ const [k,v] = p.split("="); if (k) map[k.toUpperCase()] = Number(v||0); });
+                              setSettings(s=>({...s, coupons: map}));
+                            }}/>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap gap-2 items-center">
+                        <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
+                          <Upload className="w-4 h-4"/> {t.uploadCSV}
+                          <input type="file" accept=".csv" onChange={onUploadCSV} className="hidden"/>
+                        </label>
+                        <button onClick={exportCSV} className="inline-flex items-center gap-2 text-sm rounded-xl border px-3 py-2"><FileSpreadsheet className="w-4 h-4"/>{t.exportCSV}</button>
+                        <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
+                          <Upload className="w-4 h-4"/> {t.importJSON}
+                          <input type="file" accept="application/json" onChange={importJSON} className="hidden"/>
+                        </label>
+                        <button onClick={exportJSON} className="inline-flex items-center gap-2 text-sm rounded-xl border px-3 py-2"><Download className="w-4 h-4"/>{t.exportJSON}</button>
+
+                        <div className="ml-auto flex items-center gap-2">
+                          <div className="text-xs text-neutral-500">{t.status}</div>
+                          <select className="border rounded-xl px-2 py-1" value={customer.status} onChange={e=>setCustomer({...customer, status:e.target.value})}>
+                            <option value="draft">{t.statusDraft}</option>
+                            <option value="pending">{t.statusPending}</option>
+                            <option value="shipping">{t.statusShipping}</option>
+                            <option value="done">{t.statusDone}</option>
+                          </select>
+                          <button onClick={()=>saveOrder(customer.status)} className="inline-flex items-center gap-2 text-sm rounded-xl border px-3 py-2"><Save className="w-4 h-4"/>{t.saveData}</button>
+                          <button onClick={()=>saveOrder('pending')} className="inline-flex items-center gap-2 text-sm rounded-xl border px-3 py-2 bg-neutral-900 text-white"><BadgeCheck className="w-4 h-4"/>ยืนยัน & ตัดสต๊อก</button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </section>
+
+        {/* Print Layouts */}
+        <section ref={printRef} className="hidden print:block col-span-3">
+          <div className="p-4">
+            {/* Summary */}
+            <div className="print:summary block" data-print="summary">
+              <div className="text-xl font-bold">{t.docOrderSummary}</div>
+              <div className="text-sm">{SHOP.nameTH} • {t.shopCall} {SHOP.phones.join(" / ")} • LINE {SHOP.line}</div>
+              <div className="text-sm">{settings.language==='th'?SHOP.addressTH:SHOP.addressEN}</div>
+              <OrderTable cart={cart} totals={totals} t={t} lang={settings.language} />
+            </div>
+
+            {/* Delivery Note */}
+            <div className="print:delivery mt-10" data-print="delivery">
+              <div className="text-xl font-bold">{t.docDeliveryNote}</div>
+              <DocHeader customer={customer} t={t} />
+              <OrderTable cart={cart} totals={totals} t={t} hideTax lang={settings.language}/>
+            </div>
+
+            {/* Tax Invoice */}
+            {customer.invoiceType==='full' && (
+              <div className="print:tax mt-10" data-print="tax">
+                <div className="text-xl font-bold">{t.docTaxInvoice}</div>
+                <div className="text-sm">{SHOP.nameTH} • TAX ID {SHOP.taxId}</div>
+                <DocHeader customer={customer} t={t} />
+                <OrderTable cart={cart} totals={totals} t={t} forceTax lang={settings.language}/>
+              </div>
+            )}
+          </div>
+        </section>
+      </main>
+
+      <style>{`
+        @media print {
+          header, .no-print, button, select, input, textarea { display: none !important; }
+          .print\:block { display: block !important; }
+          [data-print] { display: none; }
+          :root[style*="--print-kind: summary"] [data-print="summary"]{ display:block; }
+          :root[style*="--print-kind: delivery"] [data-print="delivery"]{ display:block; }
+          :root[style*="--print-kind: tax"] [data-print="tax"]{ display:block; }
+          table, th, td { border-color: #000 !important; }
+        }
+      `}</style>
+
+      {/* Footer */}
+      <footer className="mt-8 pb-8 text-center text-xs text-neutral-500">
+        © {new Date().getFullYear()} {SHOP.nameTH}. All rights reserved.
+      </footer>
+    </div>
+  );
+}
+
+function DocHeader({ customer, t }){
+  return (
+    <div className="mt-2 text-sm">
+      <div><span className="font-semibold">{t.customerName}:</span> {customer.name} • {customer.phone}</div>
+      {customer.address && <div><span className="font-semibold">{t.address}:</span> {customer.address}</div>}
+      {customer.deliveryDate && <div><span className="font-semibold">{t.deliveryDate}:</span> {customer.deliveryDate}</div>}
+      <div><span className="font-semibold">{t.paymentMethod}:</span> {customer.payment}</div>
+    </div>
+  );
+}
+
+function OrderTable({ cart, totals, t, hideTax=false, forceTax=false, lang }){
+  return (
+    <div className="mt-3">
+      <table className="w-full text-sm border">
+        <thead>
+          <tr className="bg-neutral-100">
+            <th className="border px-2 py-1 text-left">#</th>
+            <th className="border px-2 py-1 text-left">สินค้า</th>
+            <th className="border px-2 py-1">จำนวน</th>
+            <th className="border px-2 py-1">หน่วย</th>
+            <th className="border px-2 py-1">{t.pricePerUnit}</th>
+            <th className="border px-2 py-1">รวม</th>
+          </tr>
+        </thead>
+        <tbody>
+          {cart.map((i, idx) => (
+            <tr key={i.id}>
+              <td className="border px-2 py-1">{idx+1}</td>
+              <td className="border px-2 py-1">{i.name}</td>
+              <td className="border px-2 py-1 text-center">{i.qty}</td>
+              <td className="border px-2 py-1 text-center">{i.unit}</td>
+              <td className="border px-2 py-1 text-right">{currency(i.price, lang)}</td>
+              <td className="border px-2 py-1 text-right">{currency(i.qty * i.price, lang)}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colSpan={5} className="border px-2 py-1 text-right font-semibold">{t.subtotal}</td>
+            <td className="border px-2 py-1 text-right">{currency(totals.sub, lang)}</td>
+          </tr>
+          {(forceTax || (!hideTax && totals.vat>0)) && (
+            <tr>
+              <td colSpan={5} className="border px-2 py-1 text-right">{t.vat}</td>
+              <td className="border px-2 py-1 text-right">{currency(totals.vat, lang)}</td>
+            </tr>
+          )}
+          {totals.discount>0 && (
+            <tr>
+              <td colSpan={5} className="border px-2 py-1 text-right">Discount</td>
+              <td className="border px-2 py-1 text-right">-{currency(totals.discount, lang)}</td>
+            </tr>
+          )}
+          {totals.deliveryFee>0 && (
+            <tr>
+              <td colSpan={5} className="border px-2 py-1 text-right">{t.deliveryFee}</td>
+              <td className="border px-2 py-1 text-right">{currency(totals.deliveryFee, lang)}</td>
+            </tr>
+          )}
+          <tr>
+            <td colSpan={5} className="border px-2 py-1 text-right font-bold">{t.total}</td>
+            <td className="border px-2 py-1 text-right font-bold">{currency(totals.grand, lang)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
